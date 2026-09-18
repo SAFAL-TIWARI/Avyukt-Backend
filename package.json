@@ -1,0 +1,22 @@
+{
+  "name": "avyukt-restro-backend",
+  "version": "1.0.0",
+  "description": "Production Ready Backend for Avyukt Restaurant with Firebase NoSQL and Razorpay",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "firebase": "^12.19.0",
+    "firebase-admin": "^13.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^10.0.10",
+    "razorpay": "^2.9.5"
+  }
+}

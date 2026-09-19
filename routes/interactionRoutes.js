@@ -198,9 +198,22 @@ router.delete("/reservation/:id", async (req, res) => {
 // Customer: Submit Feedback
 router.post("/feedback", async (req, res) => {
   try {
-    const { userId, userName, userEmail, rating, tags, feedbackText } = req.body;
+    const { userId, userName, userEmail, rating, tags, feedbackText, userAvatar } = req.body;
     if (!rating) {
       return res.status(400).json({ success: false, message: "Rating is required" });
+    }
+    if (!feedbackText || !feedbackText.trim()) {
+      return res.status(400).json({ success: false, message: "Feedback description is mandatory" });
+    }
+
+    let resolvedAvatar = userAvatar || req.body.avatar || "";
+    if (!resolvedAvatar && userId && userId !== "anonymous" && userId !== "guest" && db) {
+      try {
+        const userDoc = await db.collection("users").doc(userId).get();
+        if (userDoc.exists) {
+          resolvedAvatar = userDoc.data().avatar || userDoc.data().photoURL || "";
+        }
+      } catch (e) {}
     }
 
     const feedbackId = `FB-${Date.now().toString().slice(-6)}`;
@@ -209,9 +222,10 @@ router.post("/feedback", async (req, res) => {
       userId: userId || "anonymous",
       userName: userName || "Valued Customer",
       userEmail: userEmail || "",
+      userAvatar: resolvedAvatar || "",
       rating: Number(rating),
       tags: tags || [],
-      feedbackText: feedbackText || "",
+      feedbackText: feedbackText.trim(),
       createdAt: new Date().toISOString(),
     };
 
@@ -252,6 +266,8 @@ router.delete("/feedback/:id", async (req, res) => {
     const { id } = req.params;
     if (db) {
       await db.collection("feedbacks").doc(id).delete();
+      cache.del("all_feedbacks");
+      cache.del("admin_stats");
     }
     return res.status(200).json({ success: true, message: "Feedback deleted successfully" });
   } catch (error) {

@@ -1,13 +1,23 @@
-﻿import express from "express";
+import express from "express";
 import { db } from "../config/firebase.js";
+import { cache } from "../utils/cache.js";
 
 const router = express.Router();
 
 /**
- * Get Admin Dashboard Overview Statistics
+ * Get Admin Dashboard Overview Statistics (Cached for 20 seconds)
  */
 router.get("/stats", async (req, res) => {
   try {
+    const cachedStats = cache.get("admin_stats");
+    if (cachedStats) {
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        stats: cachedStats,
+      });
+    }
+
     let totalRevenue = 0;
     let totalOrders = 0;
     let pendingOrders = 0;
@@ -49,18 +59,24 @@ router.get("/stats", async (req, res) => {
       totalContacts = contactsSnapshot.size;
     }
 
+    const calculatedStats = {
+      totalRevenue,
+      totalOrders,
+      pendingOrders,
+      activeKitchenOrders,
+      deliveredOrders,
+      totalBookings,
+      totalFeedbacks,
+      totalContacts,
+    };
+
+    // Cache computed stats for 20 seconds
+    cache.set("admin_stats", calculatedStats, 20);
+
     return res.status(200).json({
       success: true,
-      stats: {
-        totalRevenue,
-        totalOrders,
-        pendingOrders,
-        activeKitchenOrders,
-        deliveredOrders,
-        totalBookings,
-        totalFeedbacks,
-        totalContacts,
-      },
+      cached: false,
+      stats: calculatedStats,
     });
   } catch (error) {
     console.error("Error fetching admin stats:", error);

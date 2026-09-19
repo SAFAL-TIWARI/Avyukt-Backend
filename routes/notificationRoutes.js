@@ -41,11 +41,38 @@ router.get("/:userId", async (req, res) => {
           });
         }
 
-        // 3. Broadcast to all
+        // 3. Broadcast to all (STRICT PRIVACY: ONLY genuine global broadcast announcements, NEVER user-specific inquiries, orders, or reservation updates)
         const allNotes = await db.collection("notifications").where("userId", "==", "all").get();
         allNotes.forEach((doc) => {
+          const data = doc.data();
+          const notifEmail = (data.userEmail || "").trim().toLowerCase();
+
+          // If this notification was targeted to a specific customer email, it is NOT a broadcast to everyone!
+          if (notifEmail && notifEmail !== "all") {
+            if (userEmail && notifEmail === userEmail) {
+              if (!list.some(n => n.id === doc.id)) {
+                list.push({ id: doc.id, ...data });
+              }
+            }
+            return;
+          }
+
+          // User-specific protection: do not leak order/reservation/inquiry as global broadcasts
+          const title = (data.title || "").toLowerCase();
+          const isUserSpecific = 
+            data.type === "order" || 
+            data.type === "contact" || 
+            title.includes("inquiry") || 
+            title.includes("reservation") || 
+            title.includes("table #") || 
+            title.includes("order #");
+
+          if (isUserSpecific) {
+            return; // Block leakage to other users
+          }
+
           if (!list.some(n => n.id === doc.id)) {
-            list.push({ id: doc.id, ...doc.data() });
+            list.push({ id: doc.id, ...data });
           }
         });
       } catch (err) {

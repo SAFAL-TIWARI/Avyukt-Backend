@@ -1,6 +1,7 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import compression from "compression";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -18,21 +19,59 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Enable HTTP ETag generation for conditional requests (304 Not Modified)
+app.set("etag", "strong");
+
+// Compress all response payloads larger than 1KB (Gzip / Deflate)
+app.use(
+  compression({
+    level: 6,
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  })
+);
+
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
       "http://localhost:3000",
-      process.env.FRONTEND_URL || "https://avyukt-restro.vercel.app",
+      process.env.FRONTEND_URL || "https://avyukt-restaurant.vercel.app",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "If-None-Match"],
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Cache-Control headers for standard REST responses
+app.use((req, res, next) => {
+  const url = req.url.toLowerCase();
+  const isAdminOrRealtime = 
+    url.startsWith("/api/interactions/reservation") ||
+    url.startsWith("/api/admin") ||
+    url.startsWith("/api/orders") ||
+    url.startsWith("/api/notifications");
+
+  if (req.method === "GET" && !isAdminOrRealtime) {
+    // 5-second public cache with stale-while-revalidate for public static endpoints
+    res.setHeader("Cache-Control", "public, max-age=5, stale-while-revalidate=15");
+  } else {
+    // Live admin pipelines, reservations, and mutations must never be cached by browser
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
@@ -50,6 +89,8 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({
     status: "healthy",
     restaurant: "Avyukt Restaurant & Cafe",
+    compression: "enabled",
+    caching: "enabled",
     timestamp: new Date().toISOString(),
   });
 });
@@ -70,6 +111,6 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`\n==================================================`);
   console.log(`🚀 Avyukt Restaurant Backend is listening on PORT: ${PORT}`);
-  console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
+  console.log(`🚀 Health Check: http://localhost:${PORT}/api/health`);
   console.log(`==================================================\n`);
 });

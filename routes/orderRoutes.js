@@ -1,5 +1,6 @@
 ﻿import express from "express";
 import { db } from "../config/firebase.js";
+import { cache } from "../utils/cache.js";
 
 const router = express.Router();
 
@@ -87,6 +88,7 @@ router.post("/", async (req, res) => {
     }
 
     // Trigger Notification for User
+    cache.del("admin_stats");
     await createNotification({
       userId: orderData.userId,
       type: "order",
@@ -122,7 +124,19 @@ router.get("/user/:userId", async (req, res) => {
     }
 
     orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return res.status(200).json({ success: true, orders });
+    const page = parseInt(req.query.page);
+    const limit = parseInt(req.query.limit);
+    if (page && limit) {
+      const startIndex = (page - 1) * limit;
+      return res.status(200).json({
+        success: true,
+        orders: orders.slice(startIndex, startIndex + limit),
+        total: orders.length,
+        page,
+        totalPages: Math.ceil(orders.length / limit)
+      });
+    }
+    return res.status(200).json({ success: true, orders, total: orders.length });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -141,7 +155,19 @@ router.get("/all", async (req, res) => {
       });
     }
     orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return res.status(200).json({ success: true, orders });
+    const page = parseInt(req.query.page);
+    const limit = parseInt(req.query.limit);
+    if (page && limit) {
+      const startIndex = (page - 1) * limit;
+      return res.status(200).json({
+        success: true,
+        orders: orders.slice(startIndex, startIndex + limit),
+        total: orders.length,
+        page,
+        totalPages: Math.ceil(orders.length / limit)
+      });
+    }
+    return res.status(200).json({ success: true, orders, total: orders.length });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -166,6 +192,7 @@ router.patch("/:id/status", async (req, res) => {
       if (doc.exists) {
         targetUserId = doc.data().userId;
       }
+      cache.del("admin_stats");
       await orderRef.update({
         orderStatus,
         updatedAt: new Date().toISOString(),

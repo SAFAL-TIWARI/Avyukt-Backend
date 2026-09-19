@@ -1,14 +1,15 @@
 import express from "express";
 import { db } from "../config/firebase.js";
+import { cache } from "../utils/cache.js";
 import { sendEmail } from "../utils/mailer.js";
 
 const router = express.Router();
 
 // Helper for interaction notifications
-const createNotification = async ({ userId, userEmail, type, title, message }) => {
+const createNotification = async ({ id: customId, userId, userEmail, type, title, message }) => {
   if (!db) return;
   try {
-    const notifId = "NOTIF-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    const notifId = customId || ("NOTIF-" + Date.now() + "-" + Math.floor(Math.random() * 1000));
     const notifData = {
       id: notifId,
       userId: userId || "all",
@@ -35,6 +36,19 @@ router.post("/reservation", async (req, res) => {
       return res.status(400).json({ success: false, message: "Name, phone, date, and guests count are required" });
     }
 
+    // Enforce 10-digit phone number
+    const cleanPhone = String(phone || "").replace(/\D/g, "").slice(-10);
+    if (cleanPhone.length !== 10) {
+      return res.status(400).json({ success: false, message: "Please provide a valid 10-digit phone number" });
+    }
+
+    // Disallow past dates
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (date < todayStr) {
+      return res.status(400).json({ success: false, message: "Reservation date cannot be in the past" });
+    }
+
     let resolvedUserId = userId || "guest";
     const cleanEmail = (email || "").trim().toLowerCase();
 
@@ -55,7 +69,7 @@ router.post("/reservation", async (req, res) => {
       id: bookingId,
       userId: resolvedUserId,
       name,
-      phone,
+      phone: cleanPhone,
       email: cleanEmail,
       date,
       time: time || "07:30 PM",
@@ -68,6 +82,7 @@ router.post("/reservation", async (req, res) => {
 
     if (db) {
       await db.collection("tableBookings").doc(bookingId).set(bookingData);
+    cache.del("admin_stats"); // res
     }
 
     return res.status(201).json({
@@ -135,33 +150,28 @@ router.patch("/reservation/:id/status", async (req, res) => {
       }
     }
 
-    // Always create notification for customer
+    // Always create notification for customer (only on final Confirmed or Rejected, with idempotent ID)
     if (status === "Confirmed") {
       const tableMsg = finalTableNo ? ` Your allotted table is: #${finalTableNo}.` : "";
       await createNotification({
+        id: `NOTIF-RES-${id}-Confirmed`,
         userId: targetUserId,
         userEmail: targetEmail,
         type: "order",
-        title: finalTableNo ? `Table #${finalTableNo} Confirmed! 🍽️` : "Table Booking Confirmed! 🎉",
-        message: `Your reservation for ${resDate} at ${resTime} is CONFIRMED.${tableMsg} We look forward to hosting you at Avyukt!`,
+        title: finalTableNo ? `Table #${finalTableNo} Confirmed` : "Table Booking Confirmed",
+        message: `Your reservation for ${resDate}${resTime ? ` at ${resTime}` : ""} is CONFIRMED.${tableMsg} We look forward to hosting you at Avyukt!`,
       });
     } else if (status === "Rejected") {
       await createNotification({
+        id: `NOTIF-RES-${id}-Rejected`,
         userId: targetUserId,
         userEmail: targetEmail,
         type: "order",
-        title: "Table Booking Update",
-        message: `Your table reservation request for ${resDate} at ${resTime} could not be confirmed.`,
-      });
-    } else if (finalTableNo && status !== "Rejected") {
-      await createNotification({
-        userId: targetUserId,
-        userEmail: targetEmail,
-        type: "order",
-        title: `Table #${finalTableNo} Allotted! 🍽️`,
-        message: `Table #${finalTableNo} has been assigned for your reservation on ${resDate} at ${resTime}.`,
+        title: "Table Booking Declined",
+        message: `Your table reservation request for ${resDate}${resTime ? ` at ${resTime}` : ""} has been declined.`,
       });
     }
+    // Note: Table allotment alone is an internal admin step and does not spam the customer with duplicate allotment notifications.
 
     return res.status(200).json({ success: true, message: "Reservation updated successfully", targetUserId });
   } catch (error) {
@@ -207,6 +217,8 @@ router.post("/feedback", async (req, res) => {
 
     if (db) {
       await db.collection("feedbacks").doc(feedbackId).set(feedbackData);
+    cache.del("all_feedbacks");
+    cache.del("admin_stats");
     }
 
     return res.status(201).json({
@@ -360,14 +372,21 @@ router.post("/contact/:id/reply", async (req, res) => {
     const queryExcerpt = originalQuery.length > 35 ? originalQuery.slice(0, 35) + "..." : originalQuery;
     const notifTitle = queryExcerpt ? `Reply to Inquiry: "${queryExcerpt}"` : "Response to Your Inquiry - Avyukt Restaurant";
 
-    // 1. Send In-App Notification to Customer
-    await createNotification({
-      userId: targetUserId || "all",
-      userEmail: targetEmail,
-      type: "announcement",
-      title: notifTitle,
-      message: `Dear ${contactData?.name || "Customer"},\n\n${replyMessage.trim()}`,
-    });
+    // 1. Send In-App Notification strictly to that user (NEVER broadcast as "all"!)
+    const resolvedUserId = (targetUserId && targetUserId !== "guest" && targetUserId !== "user" && targetUserId !== "anonymous")
+      ? targetUserId
+      : (targetEmail ? `email_${targetEmail}` : null);
+
+    if (resolvedUserId || targetEmail) {
+      await createNotification({
+        id: `NOTIF-REPLY-${id}`,
+        userId: resolvedUserId || `email_${targetEmail}`,
+        userEmail: targetEmail,
+        type: "contact",
+        title: notifTitle,
+        message: `Dear ${contactData?.name || "Customer"},\n\n${replyMessage.trim()}`,
+      });
+    }
 
     // 2. Send structured Email to user
     let emailStatus = { sent: false };
@@ -438,8 +457,8 @@ router.post("/contact/:id/reply", async (req, res) => {
 
               <div style="font-size: 12px; color: #8c7366; line-height: 1.6; text-align: center;">
                 <p style="margin: 0 0 4px 0;"><strong>Avyukt Restaurant</strong></p>
-                <p style="margin: 0 0 4px 0;">📍 Hotel Grand Ashok, Vidisha - 464001, Madhya Pradesh, India</p>
-                <p style="margin: 0;">📞 +91 9039121277 &bull; ✉️ rahul.baghel76@gmail.com</p>
+                <p style="margin: 0 0 4px 0;">Hotel Grand Ashok, Vidisha - 464001, Madhya Pradesh, India</p>
+                <p style="margin: 0;">Phone: +91 9039121277 &bull; Email: rahul.baghel76@gmail.com</p>
               </div>
 
             </div>

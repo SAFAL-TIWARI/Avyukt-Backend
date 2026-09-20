@@ -174,6 +174,24 @@ router.get("/all", async (req, res) => {
 });
 
 /**
+ * Get Single Order by ID
+ */
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (db) {
+      const doc = await db.collection("orders").doc(id).get();
+      if (doc.exists) {
+        return res.status(200).json({ success: true, order: { id: doc.id, ...doc.data() } });
+      }
+    }
+    return res.status(404).json({ success: false, message: "Order not found" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+/**
  * Admin: Update Order Status
  */
 router.patch("/:id/status", async (req, res) => {

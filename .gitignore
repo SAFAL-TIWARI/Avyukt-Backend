@@ -24,5 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 
+uploadmenu.mjs
+
 # Ignore service account key
 serviceAccountKey.json
